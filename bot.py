@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Nitro Movies Bot — Temur uchun sozlangan
-# ============================ BOT KODI BOSHLANADI ============================
 
 import os
 import sqlite3
@@ -145,8 +144,7 @@ def menu_categories(message: telebot.types.Message):
 def menu_services(message: telebot.types.Message):
     bot.send_message(
         message.chat.id,
-        "⭐ <b>Xizmatlar</b>\n\n"
-        "Telegram Premium / Telegram Stars / Admin bilan bog‘lanish:",
+        "⭐ <b>Xizmatlar</b>\n\nTelegram Premium / Telegram Stars / Admin bilan bog‘lanish:",
         reply_markup=services_keyboard(),
         disable_web_page_preview=True
     )
@@ -226,8 +224,7 @@ def by_code(message: telebot.types.Message):
     code = message.text.strip()
     row = db_get(code)
     if not row:
-
-return
+        return
     _, category, file_id, media_type = row
     try:
         caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>"
@@ -259,7 +256,7 @@ def run_flask():
 threading.Thread(target=run_flask).start()
 
 # ============================ BOTNI ISHGA TUSHURISH ============================
-if name == "__main__":
+if __name__ == "__main__":
     print("Bot ishga tushdi...")
     bot.skip_pending = True
     bot.infinity_polling(timeout=30, long_polling_timeout=30)
