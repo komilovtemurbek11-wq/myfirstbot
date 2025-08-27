@@ -1,31 +1,18 @@
 # -*- coding: utf-8 -*-
 # Nitro Movies Bot — Temur uchun sozlangan
-# Funksiyalar:
-# - /start -> foydalanuvchi uchun menyu (Kinolar / Seriallar / Multfilmlar / Xizmatlar / Admin bilan bog'lanish)
-# - Admin uchun /start -> qo'shimcha "🛠 Admin panel" tugmasi ko'rinadi (boshqalarga ko'rinmaydi)
-# - Reply qilib: "add <kategoriya> <kod>" (kategoriya: kino | serial | multfilm) [faqat admin]
-# - Reply qilib: "del <kod>"  [faqat admin]
-# - Kod yozilsa -> saqlangan media yuboriladi
-# - /id -> user ID (admin ro'yxatini to'ldirish uchun)
-#
-# Saqlash: SQLite (code, category, file_id, media_type)
-# Qo'llab-quvvatlanadigan media: video, document, animation (gif), sticker
-# Katta fayllar: Telegram file_id orqali yuboriladi (2GB/4GB gacha)
+# ============================ BOT KODI BOSHLANADI ============================
 
 import os
 import sqlite3
 import telebot
 from telebot import types
+from flask import Flask
+import threading
 
 # ===================== MUHIM SOZLAMALAR =====================
 TOKEN = os.getenv("BOT_TOKEN", "8374881360:AAG4awRqTVHRJCptoLY1ItLss6r6oLl0DRE")
-
-# Faqat adminlar (faqat shu ID'lar add/del va admin panelni ko'radi)
 ADMIN_IDS = {5051898362}
-
-# Admin username
 ADMIN_USERNAME = "temur_2080"  # @temur_2080
-
 DB_PATH = "media.db"
 # ============================================================
 
@@ -176,7 +163,7 @@ def menu_admin_contact(message: telebot.types.Message):
 @bot.message_handler(func=lambda m: m.text == "🛠 Admin panel")
 def menu_admin_panel(message: telebot.types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        return  # yashirin
+        return
     bot.reply_to(message, admin_help_text(), reply_markup=main_menu(True))
 
 # ====== ADD / DEL (faqat adminlar) ======
@@ -186,24 +173,20 @@ def is_admin(user_id: int) -> bool:
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("add"))
 def handle_add(message: telebot.types.Message):
     if not is_admin(message.from_user.id):
-        # foydalanuvchiga soddaroq javob, admin detallarini bermaymiz
         return bot.reply_to(message, "⛔ Ruxsat yo‘q.")
     parts = message.text.split()
     if len(parts) < 3:
-        return bot.reply_to(message, "❗ Format: <code>add &lt;kategoriya&gt; &lt;kod&gt;</code>\nMasalan: <code>add kino fastx10</code>")
+        return bot.reply_to(message, "❗ Format: <code>add &lt;kategoriya&gt; &lt;kod&gt;</code>")
     raw_cat = parts[1]
     code = " ".join(parts[2:]).strip()
     category = normalize_category(raw_cat)
     if not category:
         return bot.reply_to(message, "❗ Kategoriya: <code>kino</code> | <code>serial</code> | <code>multfilm</code>")
-
     if not message.reply_to_message:
-        return bot.reply_to(message, "❗ <b>Media xabariga reply</b> qilib yuboring (video/document/animation/sticker), keyin <code>add ...</code> yozing.")
-
+        return bot.reply_to(message, "❗ Media xabariga reply qilib yuboring.")
     r = message.reply_to_message
     file_id = None
     media_type = None
-
     if r.video:
         file_id = r.video.file_id
         media_type = "video"
@@ -217,8 +200,7 @@ def handle_add(message: telebot.types.Message):
         file_id = r.sticker.file_id
         media_type = "sticker"
     else:
-        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring va shunga reply qiling.")
-
+        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring.")
     try:
         db_add(code, category, file_id, media_type)
         bot.reply_to(message, f"✅ Qo‘shildi:\n• Kategoriya: <b>{category}</b>\n• Kod: <code>{code}</code>\n• Media: <i>{media_type}</i>")
@@ -239,15 +221,13 @@ def handle_del(message: telebot.types.Message):
     else:
         bot.reply_to(message, f"❌ Topilmadi: <code>{code}</code>")
 
-# ====== Kod bilan olish ======
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith("/"))
 def by_code(message: telebot.types.Message):
     code = message.text.strip()
     row = db_get(code)
     if not row:
-        return  # jim turamiz yoki: bot.reply_to(message, "❌ Bunday kod topilmadi.")
+        return
     _, category, file_id, media_type = row
-
     try:
         caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>"
         if media_type == "video":
@@ -264,7 +244,20 @@ def by_code(message: telebot.types.Message):
     except Exception as e:
         bot.reply_to(message, f"⚠️ Yuborishda xato: {e}")
 
-# ====== Run ======
+# ============================ FLASK WEB SERVER (PORT OCHISH) ============================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+port = int(os.environ.get("PORT", 10000))
+def run_flask():
+    app.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=run_flask).start()
+
+# ============================ BOTNI ISHGA TUSHURISH ============================
 if __name__ == "__main__":
     print("Bot ishga tushdi...")
     bot.skip_pending = True
