@@ -1,13 +1,19 @@
+Temur, [8/27/2025 9:47 PM]
 # -*- coding: utf-8 -*-
 # Nitro Movies Bot — Temur uchun sozlangan
+# ============================ BOT KODI BOSHLANADI ============================
+
 import os
 import sqlite3
 import telebot
 from telebot import types
+from flask import Flask
+import threading
 
 # ===================== MUHIM SOZLAMALAR =====================
 TOKEN = os.getenv("BOT_TOKEN", "8374881360:AAG4awRqTVHRJCptoLY1ItLss6r6oLl0DRE")
 ADMIN_IDS = {5051898362}
+ADMIN_USERNAME = "temur_2080"  # @temur_2080
 DB_PATH = "media.db"
 # ============================================================
 
@@ -82,10 +88,10 @@ def main_menu(is_admin: bool = False):
 def services_keyboard():
     ikb = types.InlineKeyboardMarkup()
     ikb.add(
-        types.InlineKeyboardButton("Telegram Premium", url="https://t.me/temur_2080"),
-        types.InlineKeyboardButton("Telegram Stars", url="https://t.me/temur_2080")
+        types.InlineKeyboardButton("Telegram Premium", url=f"https://t.me/{ADMIN_USERNAME}"),
+        types.InlineKeyboardButton("Telegram Stars", url=f"https://t.me/{ADMIN_USERNAME}")
     )
-    ikb.add(types.InlineKeyboardButton("Admin bilan bog‘lanish", url="https://t.me/temur_2080"))
+    ikb.add(types.InlineKeyboardButton("Admin bilan bog‘lanish", url=f"https://t.me/{ADMIN_USERNAME}"))
     return ikb
 
 def admin_help_text():
@@ -118,6 +124,7 @@ def cmd_start(message: telebot.types.Message):
 def cmd_id(message: telebot.types.Message):
     bot.reply_to(message, f"Sizning ID: <code>{message.from_user.id}</code>")
 
+Temur, [8/27/2025 9:47 PM]
 # ====== Menyu tugmalari ======
 @bot.message_handler(func=lambda m: m.text in ["🎥 Kinolar", "📺 Seriallar", "🎞 Multfilmlar"])
 def menu_categories(message: telebot.types.Message):
@@ -150,7 +157,7 @@ def menu_services(message: telebot.types.Message):
 def menu_admin_contact(message: telebot.types.Message):
     bot.send_message(
         message.chat.id,
-        f"👉 <b>Admin:</b> @temur_2080",
+        f"👉 <b>Admin:</b> @{ADMIN_USERNAME}",
         reply_markup=main_menu(message.from_user.id in ADMIN_IDS),
         disable_web_page_preview=True
     )
@@ -177,10 +184,8 @@ def handle_add(message: telebot.types.Message):
     category = normalize_category(raw_cat)
     if not category:
         return bot.reply_to(message, "❗ Kategoriya: <code>kino</code> | <code>serial</code> | <code>multfilm</code>")
-
     if not message.reply_to_message:
-        return bot.reply_to(message, "❗ <b>Media xabariga reply</b> qilib yuboring, keyin <code>add ...</code> yozing.")
-
+        return bot.reply_to(message, "❗ Media xabariga reply qilib yuboring.")
     r = message.reply_to_message
     file_id = None
     media_type = None
@@ -197,8 +202,7 @@ def handle_add(message: telebot.types.Message):
         file_id = r.sticker.file_id
         media_type = "sticker"
     else:
-        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring va shunga reply qiling.")
-
+        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring.")
     try:
         db_add(code, category, file_id, media_type)
         bot.reply_to(message, f"✅ Qo‘shildi:\n• Kategoriya: <b>{category}</b>\n• Kod: <code>{code}</code>\n• Media: <i>{media_type}</i>")
@@ -219,13 +223,14 @@ def handle_del(message: telebot.types.Message):
     else:
         bot.reply_to(message, f"❌ Topilmadi: <code>{code}</code>")
 
-# ====== Kod bilan olish ======
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith("/"))
 def by_code(message: telebot.types.Message):
     code = message.text.strip()
     row = db_get(code)
     if not row:
-        return
+
+Temur, [8/27/2025 9:47 PM]
+return
     _, category, file_id, media_type = row
     try:
         caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>"
@@ -243,9 +248,21 @@ def by_code(message: telebot.types.Message):
     except Exception as e:
         bot.reply_to(message, f"⚠️ Yuborishda xato: {e}")
 
-# ====== RUN POLLING ======
-if __name__ == "__main__":
+# ============================ FLASK WEB SERVER (PORT OCHISH) ============================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+port = int(os.environ.get("PORT", 10000))
+def run_flask():
+    app.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=run_flask).start()
+
+# ============================ BOTNI ISHGA TUSHURISH ============================
+if name == "__main__":
     print("Bot ishga tushdi...")
     bot.skip_pending = True
     bot.infinity_polling(timeout=30, long_polling_timeout=30)
-
