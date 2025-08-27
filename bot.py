@@ -1,4 +1,3 @@
-Temur, [8/27/2025 9:47 PM]
 # -*- coding: utf-8 -*-
 # Nitro Movies Bot — Temur uchun sozlangan
 # ============================ BOT KODI BOSHLANADI ============================
@@ -124,7 +123,6 @@ def cmd_start(message: telebot.types.Message):
 def cmd_id(message: telebot.types.Message):
     bot.reply_to(message, f"Sizning ID: <code>{message.from_user.id}</code>")
 
-Temur, [8/27/2025 9:47 PM]
 # ====== Menyu tugmalari ======
 @bot.message_handler(func=lambda m: m.text in ["🎥 Kinolar", "📺 Seriallar", "🎞 Multfilmlar"])
 def menu_categories(message: telebot.types.Message):
@@ -229,7 +227,6 @@ def by_code(message: telebot.types.Message):
     row = db_get(code)
     if not row:
 
-Temur, [8/27/2025 9:47 PM]
 return
     _, category, file_id, media_type = row
     try:
