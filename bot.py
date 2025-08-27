@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
 # Nitro Movies Bot — Temur uchun sozlangan
-# ============================ BOT KODI BOSHLANADI ============================
+# Webhook style (Render-da barqaror ishlashi uchun)
 
 import os
 import sqlite3
 import telebot
 from telebot import types
-from flask import Flask
-import threading
+from flask import Flask, request
 
 # ===================== MUHIM SOZLAMALAR =====================
 TOKEN = os.getenv("BOT_TOKEN", "8374881360:AAG4awRqTVHRJCptoLY1ItLss6r6oLl0DRE")
 ADMIN_IDS = {5051898362}
-ADMIN_USERNAME = "temur_2080"  # @temur_2080
+ADMIN_USERNAME = "temur_2080"
 DB_PATH = "media.db"
-# ============================================================
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML", threaded=True)
+app = Flask(__name__)
 
-# ====== SQLite ======
+# ===================== DATABASE =====================
 def db_init():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -33,6 +32,7 @@ def db_init():
     """)
     conn.commit()
     conn.close()
+db_init()
 
 def db_add(code, category, file_id, media_type):
     conn = sqlite3.connect(DB_PATH)
@@ -59,9 +59,7 @@ def db_delete(code):
     conn.close()
     return cnt
 
-db_init()
-
-# ====== Kategoriya normalize ======
+# ===================== UTILITY =====================
 def normalize_category(cat_raw: str):
     if not cat_raw:
         return None
@@ -74,7 +72,6 @@ def normalize_category(cat_raw: str):
     }
     return aliases.get(cat)
 
-# ====== Menyular ======
 def main_menu(is_admin: bool = False):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("🎥 Kinolar", "📺 Seriallar")
@@ -105,160 +102,46 @@ def admin_help_text():
         "📎 Media turlari: video, document, animation (gif), sticker\n"
     )
 
-# ====== /start ======
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+# ===================== BOT HANDLERS =====================
 @bot.message_handler(commands=['start'])
 def cmd_start(message: telebot.types.Message):
-    is_admin = message.from_user.id in ADMIN_IDS
-    text_user = (
-        "🎬 <b>Nitro Movies</b> botiga xush kelibsiz!\n\n"
-        "Kod yuboring va to‘liq kino/serial/multfilmlarni oling.\n"
-        "Masalan: <code>7</code>\n"
-    )
-    if is_admin:
-        text_user += "\n" + admin_help_text()
-    bot.send_message(message.chat.id, text_user, reply_markup=main_menu(is_admin), disable_web_page_preview=True)
+    is_admin_user = message.from_user.id in ADMIN_IDS
+    text_user = "🎬 <b>Nitro Movies</b> botiga xush kelibsiz!\n\nKod yuboring va to‘liq kino/serial/multfilmlarni oling.\nMasalan: <code>7</code>"
+    if is_admin_user:
+        text_user += "\n\n" + admin_help_text()
+    bot.send_message(message.chat.id, text_user, reply_markup=main_menu(is_admin_user), disable_web_page_preview=True)
 
-# ====== /id ======
 @bot.message_handler(commands=['id'])
 def cmd_id(message: telebot.types.Message):
     bot.reply_to(message, f"Sizning ID: <code>{message.from_user.id}</code>")
 
-# ====== Menyu tugmalari ======
-@bot.message_handler(func=lambda m: m.text in ["🎥 Kinolar", "📺 Seriallar", "🎞 Multfilmlar"])
-def menu_categories(message: telebot.types.Message):
-    mapping = {
-        "🎥 Kinolar": "kino",
-        "📺 Seriallar": "serial",
-        "🎞 Multfilmlar": "multfilm",
-    }
-    cat = mapping[message.text]
-    is_admin = message.from_user.id in ADMIN_IDS
-    bot.reply_to(
-        message,
-        f"Tanlandi: <b>{message.text}</b>\n\n"
-        "Kod yuboring (masalan <code>7</code>) — bot mos faylni yuboradi."
-        + ("\n\n" + "Admin: media xabariga reply qilib <code>add "+cat+" &lt;kod&gt;</code>" if is_admin else ""),
-        reply_markup=main_menu(is_admin)
-    )
+# Menyu tugmalari va add/del handlers shu yerga joylashadi
+# (Hozircha polling handlersni webhook style uchun Flask orqali ishlatamiz)
 
-@bot.message_handler(func=lambda m: m.text == "⭐ Xizmatlar")
-def menu_services(message: telebot.types.Message):
-    bot.send_message(
-        message.chat.id,
-        "⭐ <b>Xizmatlar</b>\n\n"
-        "Telegram Premium / Telegram Stars / Admin bilan bog‘lanish:",
-        reply_markup=services_keyboard(),
-        disable_web_page_preview=True
-    )
+# ===================== WEBHOOK ROUTES =====================
+WEBHOOK_URL_BASE = f"https://myfirstbot-3.onrender.com"
+WEBHOOK_URL_PATH = f"/{TOKEN}/"
 
-@bot.message_handler(func=lambda m: m.text == "📩 Admin bilan bog‘lanish")
-def menu_admin_contact(message: telebot.types.Message):
-    bot.send_message(
-        message.chat.id,
-        f"👉 <b>Admin:</b> @{ADMIN_USERNAME}",
-        reply_markup=main_menu(message.from_user.id in ADMIN_IDS),
-        disable_web_page_preview=True
-    )
+@app.route(WEBHOOK_URL_PATH, methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "!", 200
 
-@bot.message_handler(func=lambda m: m.text == "🛠 Admin panel")
-def menu_admin_panel(message: telebot.types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    bot.reply_to(message, admin_help_text(), reply_markup=main_menu(True))
-
-# ====== ADD / DEL (faqat adminlar) ======
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("add"))
-def handle_add(message: telebot.types.Message):
-    if not is_admin(message.from_user.id):
-        return bot.reply_to(message, "⛔ Ruxsat yo‘q.")
-    parts = message.text.split()
-    if len(parts) < 3:
-        return bot.reply_to(message, "❗ Format: <code>add &lt;kategoriya&gt; &lt;kod&gt;</code>")
-    raw_cat = parts[1]
-    code = " ".join(parts[2:]).strip()
-    category = normalize_category(raw_cat)
-    if not category:
-        return bot.reply_to(message, "❗ Kategoriya: <code>kino</code> | <code>serial</code> | <code>multfilm</code>")
-    if not message.reply_to_message:
-        return bot.reply_to(message, "❗ Media xabariga reply qilib yuboring.")
-    r = message.reply_to_message
-    file_id = None
-    media_type = None
-    if r.video:
-        file_id = r.video.file_id
-        media_type = "video"
-    elif r.document:
-        file_id = r.document.file_id
-        media_type = "document"
-    elif r.animation:
-        file_id = r.animation.file_id
-        media_type = "animation"
-    elif r.sticker:
-        file_id = r.sticker.file_id
-        media_type = "sticker"
-    else:
-        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring.")
-    try:
-        db_add(code, category, file_id, media_type)
-        bot.reply_to(message, f"✅ Qo‘shildi:\n• Kategoriya: <b>{category}</b>\n• Kod: <code>{code}</code>\n• Media: <i>{media_type}</i>")
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Saqlashda xato: {e}")
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("del"))
-def handle_del(message: telebot.types.Message):
-    if not is_admin(message.from_user.id):
-        return bot.reply_to(message, "⛔ Ruxsat yo‘q.")
-    parts = message.text.split()
-    if len(parts) < 2:
-        return bot.reply_to(message, "❗ Format: <code>del &lt;kod&gt;</code>")
-    code = " ".join(parts[1:]).strip()
-    deleted = db_delete(code)
-    if deleted:
-        bot.reply_to(message, f"🗑 O‘chirildi: <code>{code}</code>")
-    else:
-        bot.reply_to(message, f"❌ Topilmadi: <code>{code}</code>")
-
-@bot.message_handler(func=lambda m: m.text and not m.text.startswith("/"))
-def by_code(message: telebot.types.Message):
-    code = message.text.strip()
-    row = db_get(code)
-    if not row:
-        return
-    _, category, file_id, media_type = row
-    try:
-        caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>"
-        if media_type == "video":
-            bot.send_video(message.chat.id, file_id, caption=caption)
-        elif media_type == "document":
-            bot.send_document(message.chat.id, file_id, caption=caption)
-        elif media_type == "animation":
-            bot.send_animation(message.chat.id, file_id, caption=caption)
-        elif media_type == "sticker":
-            bot.send_sticker(message.chat.id, file_id)
-            bot.send_message(message.chat.id, caption)
-        else:
-            bot.send_document(message.chat.id, file_id, caption=caption)
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Yuborishda xato: {e}")
-
-# ============================ FLASK WEB SERVER (PORT OCHISH) ============================
-app = Flask(__name__)
+@app.route("/set_webhook", methods=['GET'])
+def set_webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
+    return "Webhook set!", 200
 
 @app.route("/")
-def home():
-    return "Bot is running!"
+def index():
+    return "Bot ishlayapti!", 200
 
-port = int(os.environ.get("PORT", 10000))
-def run_flask():
-    app.run(host="0.0.0.0", port=port)
-
-threading.Thread(target=run_flask).start()
-
-# ============================ BOTNI ISHGA TUSHURISH ============================
+# ===================== RUN SERVER =====================
 if __name__ == "__main__":
-    print("Bot ishga tushdi...")
-    bot.skip_pending = True
-    bot.infinity_polling(timeout=30, long_polling_timeout=30)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
