@@ -25,6 +25,7 @@ def db_init():
     CREATE TABLE IF NOT EXISTS media (
         code TEXT PRIMARY KEY,
         category TEXT,
+        name TEXT,
         file_id TEXT,
         media_type TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -33,21 +34,29 @@ def db_init():
     conn.commit()
     conn.close()
 
-def db_add(code, category, file_id, media_type):
+def db_add(code, category, name, file_id, media_type):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("REPLACE INTO media (code, category, file_id, media_type) VALUES (?, ?, ?, ?)",
-              (code, category, file_id, media_type))
+    c.execute("REPLACE INTO media (code, category, name, file_id, media_type) VALUES (?, ?, ?, ?, ?)",
+              (code, category, name, file_id, media_type))
     conn.commit()
     conn.close()
 
 def db_get(code):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT code, category, file_id, media_type FROM media WHERE code = ?", (code,))
+    c.execute("SELECT code, category, name, file_id, media_type FROM media WHERE code = ?", (code,))
     row = c.fetchone()
     conn.close()
     return row
+
+def db_get_category(category):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT code, name, file_id, media_type FROM media WHERE category = ?", (category,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def db_delete(code):
     conn = sqlite3.connect(DB_PATH)
@@ -95,11 +104,8 @@ def services_keyboard():
 def admin_help_text():
     return (
         "🛠 <b>Admin panel</b>\n"
-        "➕ Qo‘shish: media xabariga <b>reply</b> qilib\n"
-        "<code>add &lt;kategoriya&gt; &lt;kod&gt;</code>\n"
-        "masalan: <code>add kino 7</code>\n\n"
-        "🗑 O‘chirish:\n"
-        "<code>del &lt;kod&gt;</code>\n\n"
+        "➕ Qo‘shish: media yuboring → kategoriya → kod → nom\n"
+        "🗑 O‘chirish: <code>del &lt;kod&gt;</code>\n"
         "📂 Kategoriyalar: <code>kino</code> | <code>serial</code> | <code>multfilm</code>\n"
         "📎 Media turlari: video, document, animation (gif), sticker\n"
     )
@@ -114,7 +120,7 @@ def cmd_start(message: telebot.types.Message):
         "Masalan: <code>7</code>\n"
     )
     if is_admin:
-        text_user += "\n" + admin_help_text()
+        text_user += "\n\n" + admin_help_text()
     bot.send_message(message.chat.id, text_user, reply_markup=main_menu(is_admin), disable_web_page_preview=True)
 
 # ====== /id ======
@@ -130,15 +136,16 @@ def menu_categories(message: telebot.types.Message):
         "📺 Seriallar": "serial",
         "🎞 Multfilmlar": "multfilm",
     }
-    cat = mapping[message.text]
-    is_admin = message.from_user.id in ADMIN_IDS
-    bot.reply_to(
-        message,
-        f"Tanlandi: <b>{message.text}</b>\n\n"
-        "Kod yuboring (masalan <code>7</code>) — bot mos faylni yuboradi."
-        + ("\n\n" + "Admin: media xabariga reply qilib <code>add "+cat+" &lt;kod&gt;</code>" if is_admin else ""),
-        reply_markup=main_menu(is_admin)
-    )
+    category = mapping[message.text]
+    rows = db_get_category(category)
+    if not rows:
+        bot.send_message(message.chat.id, "❌ Bu kategoriyada hali media yo‘q.")
+        return
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for code, name, _, _ in rows:
+        kb.add(f"{code} - {name}")
+    kb.row("⬅️ Orqaga")
+    bot.send_message(message.chat.id, f"📂 <b>{category}</b> kategoriyasidagi media ro‘yxati:", reply_markup=kb, parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text == "⭐ Xizmatlar")
 def menu_services(message: telebot.types.Message):
@@ -158,56 +165,82 @@ def menu_admin_contact(message: telebot.types.Message):
         disable_web_page_preview=True
     )
 
+# ====== ADMIN PANEL ======
 @bot.message_handler(func=lambda m: m.text == "🛠 Admin panel")
 def menu_admin_panel(message: telebot.types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    bot.reply_to(message, admin_help_text(), reply_markup=main_menu(True))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("📤 Kino/Serial/Multfilm qo‘shish")
+    kb.row("🗑 O‘chirish", "📂 Kategoriyalar")
+    kb.row("⬅️ Orqaga")
+    bot.send_message(message.chat.id, "🛠 Admin panel:", reply_markup=kb)
 
-# ====== ADD / DEL (faqat adminlar) ======
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+# ====== ADMIN MEDIA QO'SHISH BOSHLASH ======
+@bot.message_handler(func=lambda m: m.text == "📤 Kino/Serial/Multfilm qo‘shish")
+def start_add_media(message: telebot.types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    msg = bot.send_message(message.chat.id, "🔹 Iltimos, media yuboring (video/document/animation/sticker):")
+    bot.register_next_step_handler(msg, get_media_file)
 
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("add"))
-def handle_add(message: telebot.types.Message):
-    if not is_admin(message.from_user.id):
-        return bot.reply_to(message, "⛔ Ruxsat yo‘q.")
-    parts = message.text.split()
-    if len(parts) < 3:
-        return bot.reply_to(message, "❗ Format: <code>add &lt;kategoriya&gt; &lt;kod&gt;</code>")
-    raw_cat = parts[1]
-    code = " ".join(parts[2:]).strip()
-    category = normalize_category(raw_cat)
-    if not category:
-        return bot.reply_to(message, "❗ Kategoriya: <code>kino</code> | <code>serial</code> | <code>multfilm</code>")
-    if not message.reply_to_message:
-        return bot.reply_to(message, "❗ Media xabariga reply qilib yuboring.")
-    r = message.reply_to_message
+def get_media_file(message: telebot.types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     file_id = None
     media_type = None
-    if r.video:
-        file_id = r.video.file_id
+    if message.video:
+        file_id = message.video.file_id
         media_type = "video"
-    elif r.document:
-        file_id = r.document.file_id
+    elif message.document:
+        file_id = message.document.file_id
         media_type = "document"
-    elif r.animation:
-        file_id = r.animation.file_id
+    elif message.animation:
+        file_id = message.animation.file_id
         media_type = "animation"
-    elif r.sticker:
-        file_id = r.sticker.file_id
+    elif message.sticker:
+        file_id = message.sticker.file_id
         media_type = "sticker"
     else:
-        return bot.reply_to(message, "❗ Faqat video/document/animation/sticker yuboring.")
-    try:
-        db_add(code, category, file_id, media_type)
-        bot.reply_to(message, f"✅ Qo‘shildi:\n• Kategoriya: <b>{category}</b>\n• Kod: <code>{code}</code>\n• Media: <i>{media_type}</i>")
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Saqlashda xato: {e}")
+        msg = bot.send_message(message.chat.id, "❗ Faqat video/document/animation/sticker yuboring. Qaytadan yuboring:")
+        bot.register_next_step_handler(msg, get_media_file)
+        return
 
+    msg = bot.send_message(message.chat.id, "🔹 Kategoriya kiriting (kino / serial / multfilm):")
+    bot.register_next_step_handler(msg, lambda m: get_category(m, file_id, media_type))
+
+def get_category(message: telebot.types.Message, file_id, media_type):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    category = normalize_category(message.text)
+    if not category:
+        msg = bot.send_message(message.chat.id, "❗ Noto‘g‘ri kategoriya. Qaytadan kiriting (kino/serial/multfilm):")
+        bot.register_next_step_handler(msg, lambda m: get_category(m, file_id, media_type))
+        return
+    msg = bot.send_message(message.chat.id, f"🔹 Kod kiriting (masalan: 7):")
+    bot.register_next_step_handler(msg, lambda m: get_code(m, file_id, media_type, category))
+
+def get_code(message: telebot.types.Message, file_id, media_type, category):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    code = message.text.strip()
+    msg = bot.send_message(message.chat.id, f"🔹 Nom kiriting (masalan: Wednesday 1-qism):")
+    bot.register_next_step_handler(msg, lambda m: save_media(m, file_id, media_type, category, code))
+
+def save_media(message: telebot.types.Message, file_id, media_type, category, code):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    name = message.text.strip()
+    try:
+        db_add(code, category, name, file_id, media_type)
+        bot.send_message(message.chat.id, f"✅ Qo‘shildi:\n• Kategoriya: <b>{category}</b>\n• Kod: <code>{code}</code>\n• Nom: <b>{name}</b>\n• Media: <i>{media_type}</i>")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ Saqlashda xato: {e}")
+
+# ====== DELETE ======
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith("del"))
 def handle_del(message: telebot.types.Message):
-    if not is_admin(message.from_user.id):
+    if message.from_user.id not in ADMIN_IDS:
         return bot.reply_to(message, "⛔ Ruxsat yo‘q.")
     parts = message.text.split()
     if len(parts) < 2:
@@ -219,15 +252,16 @@ def handle_del(message: telebot.types.Message):
     else:
         bot.reply_to(message, f"❌ Topilmadi: <code>{code}</code>")
 
+# ====== FOYDALANUVCHI KOD YUBORGANIDA ======
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith("/"))
 def by_code(message: telebot.types.Message):
-    code = message.text.strip()
+    code = message.text.strip().split(" - ")[0]  # agar ro‘yxatdan tanlagan bo‘lsa
     row = db_get(code)
     if not row:
         return
-    _, category, file_id, media_type = row
+    _, category, name, file_id, media_type = row
+    caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>\n🎬 Nom: <b>{name}</b>"
     try:
-        caption = f"📦 Kod: <code>{code}</code>\n📂 Kategoriya: <b>{category}</b>"
         if media_type == "video":
             bot.send_video(message.chat.id, file_id, caption=caption)
         elif media_type == "document":
